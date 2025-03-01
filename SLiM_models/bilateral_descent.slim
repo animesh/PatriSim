@@ -1,338 +1,240 @@
-initialize() {
-	initializeSLiMModelType("nonWF");
-	
-	// record pedigrees
-	initializeSLiMOptions(keepPedigrees = T);
-	
-	// output tree sequences
-	initializeTreeSeq();
-	
-	// set mutation rate to 0
-	// mutations will be added during the processing of the tree sequences
-	initializeMutationRate(0);
-	
-	initializeSex("A");
+#!/bin/bash
 
-	// working directory
-	defineConstant("wd", "bash_wd");
-	
-	// number of villages
-	defineConstant("N_VILLAGES", bash_Num_villages);
-	
-	// chromosome sizes
-	defineConstant("CHR_SIZE", bash_chr_size);
-	
-	// number of replicates
-	defineConstant("N_REP", bash_Num_replicat);
-	
-	// female migration rate
-	defineConstant("MF_RATIO", bash_mf_ratio);
+STARTTIME=$(date +%s)
 
-	// male migration rate
-	defineConstant("MM_RATIO", bash_mm_ratio);
-	
-	// growth rate
-	defineConstant("R", bash_growth_rate);
-	
-	// polygyny
-	defineConstant("POLY", bash_polygyny);
-	defineConstant("supermale", bash_supermale);
-	
-	// output folder
-	defineConstant("nameDir", "bash_namedir");
-	
-	// set neutral mutations and convert to substitution
-	initializeMutationType("m1", 0.5, "f", 0.0);  // autosomes
-	initializeMutationType("m2", 1.0, "f", 0.0);  // Y marker
-	initializeMutationType("m3", 1.0, "f", 0.0);  // mito marker
-	
-	initializeGenomicElementType("g1", m1, 1.0);
-	
-	defineConstant("UpperA", CHR_SIZE[0]);  // upper boundary for autosomes	
-	defineConstant("LowerXY", CHR_SIZE[0] + 1);  // lower boundary for X/Y chromosomes
-	defineConstant("UpperXY", CHR_SIZE[0] + CHR_SIZE[1] + 2);  // upper boundary for X/Y chromosomes	
-	defineConstant("LowerMt", CHR_SIZE[0] + CHR_SIZE[1] + 3);  // lower boundary for mtDNA
-	defineConstant("UpperMt", CHR_SIZE[0] + CHR_SIZE[1] + CHR_SIZE[2] + 4);  // upper boundary for mtDNA
-	
-	initializeGenomicElement(g1, 0, UpperMt);
-	
-	// recombination rate is set to 0 for Y chromosome and mtDNA
-	initializeRecombinationRate(c(1.1e-8, 0.5, 0, 0.5, 1e-8), c(UpperA, LowerXY, UpperXY, LowerMt, UpperMt), sex='M');
-	initializeRecombinationRate(c(1.1e-8, 0.5, 1e-8, 0.5, 0), c(UpperA, LowerXY, UpperXY, LowerMt, UpperMt), sex='F');
-	
-	defineConstant("output", paste0(wd, "/Tables/Simulations_metrics/bilateral/regular/r=", R, '/', nameDir, "/"));
-}
+#############################
+######## PARAMETERS #########
+#############################
 
-1 first() {
-	// load burn-in simulation
-	sim.readFromPopulationFile(paste(c(wd, '/Burn_in/villages_unilineal_descent_burn_in_', asString(N_REP), '.trees'), sep=""));
-	T_POP = size(sim.subpopulations);  // total number of subpopulations
-	suppressWarnings(F);
-	
-	// remove unnecessary subpopulations from the burnin 
-	// this step is required when modelling bilateral descent 
-	// because the burnin is the same as for unilineal descent
-	for (i in seq(N_VILLAGES + 1, T_POP)) {
-		pop = sim.subpopulations[sim.subpopulations.id == i];
-		pop.removeSubpopulation();
-	}
-	
-	N_IND = size(p1.individuals);
-	// split the panmictic population into N_VILLAGES villages of size K_village
-	K_village = integerDiv(N_IND, N_VILLAGES);
-	for (i in 2:N_VILLAGES) {
-		// individuals are randomly split into groups maintaining the sex ratio
-		migrantsF = sample(p1.individuals[p1.individuals.sex == 'F'], asInteger(K_village/2));
-		migrantsM = sample(p1.individuals[p1.individuals.sex == 'M'], asInteger(K_village/2));
-		migrants = c(migrantsF,  migrantsM);
-		newPop = community.subpopulationsWithIDs(i);
-		newPop.takeMigrants(migrants);
-	}
-	
-	// set village initial size
-	sim.setValue("K_village", K_village);
-}
+dir=~ # path
+burnin=true  # run the burnin (need to be run only once)
 
-1 first() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_0.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+chr_size="c(1e6, 1e6, 1e4)"
+random_fission=false # true or false
+transmission="full" # "full" or "half"
+fission_threshold=150
+pM=0  # probability for a group to move to another village after a split
+violence=false # true or false
+descent="unilineal" # "unilineal" or "bilateral"
+descent_rule="matrilineal" # "patrilineal" or "matrilineal"
 
-first() {
-	// MIGRATION //
-	print("MIGRATION");
-	pops = sim.subpopulations;  // select all villages
-	inds = pops.individuals;
-	nInd = size(inds);  // nb of individuals
-	IndF = inds[inds.sex == 'F'];
-	nIndF = size(IndF);
-	IndM = inds[inds.sex == 'M'];
-	nIndM = size(IndM);
-	adults = inds.pedigreeID;
-	sim.setValue("adults", adults);
-	
-	nMigrantsF = asInteger(nIndF * MF_RATIO);  // number of female migrants
-	nMigrantsM = asInteger(nIndM * MM_RATIO);  // number of male migrants
-	migrantsF = sample(IndF, nMigrantsF);
-	migrantsM = sample(IndM, nMigrantsM);
-	
-	// migration in a new village
-	for (migrant in migrantsF)  {
-		do dest = sample(pops, 1);
-		while (dest == migrant.subpopulation);
-		dest.takeMigrants(migrant);
-	}
-	for (migrant in migrantsM)  {
-		do dest = sample(pops, 1);
-		while (dest == migrant.subpopulation);
-		dest.takeMigrants(migrant);
-	}
-}
+nb_villages=5
+nb_groups=3 # nb of descent groups -> does not make sense for bilateral descent but useful to normalize villages' sizes
+K=100 # carrying capacity per group
+polygyny="F" # "F" or "T"
+declare -i K_total=$nb_villages*$nb_groups*$K # total carrying capacity
 
-reproduction(NULL, NULL) {
-	// REPRODUCTION //
-	print("REPRODUCTION");
-	self.active = 0;  // "reproduction" is called once per generation
-	
-	// initialize nb of couples
-	nCouples = 0;
-	
-	// initialize nb of children per couple
-	nChildrenPerCouple = Dictionary();
-	
-	// initialize lists of mothers and fathers
-	mot = c();
-	fat = c();
-	
-	// initialize list of failed children
-	failedChildren = c();
-	
-	// initialize number of single individuals
-	nSingleInd = 0;
-	
-	IndsF = sim.subpopulations.individuals[sim.subpopulations.individuals.sex == 'F'];
-	nIndsF = size(IndsF); // nb of females
-	IndsM = sim.subpopulations.individuals[sim.subpopulations.individuals.sex == 'M'];
-	nIndsM = size(IndsM); // nb of males
-	nInds = nIndsF + nIndsM;
-	
-	// initialize number of children per male and per female
-	nChildrenPerMale = Dictionary();
-	nChildrenPerFemale = Dictionary();
-	for (male in IndsM) {
-		nChildrenPerMale.setValue(asString(male.pedigreeID), 0);
-	}
-	for (female in IndsF) {
-		nChildrenPerFemale.setValue(asString(female.pedigreeID), 0);
-	}
-	
-	// make K_village children
-	K_village = sim.getValue("K_village");
-	K_village = asInteger(K_village * exp(R)); // exponential growth
-	sim.setValue("K_village", K_village); // update K_village
-	
-	for (pop in sim.subpopulations) {
-		// initialize number of children
-		nChildrenDone = 0;
+########## EXTINCTION RATE IN CASE OF VIOLENCE ###########
+e=0.15
+##########################################################
+
+mf=0.1  # female migration rate
+mm=0  # male migration rate
+sigma=0.1 # variance of the normal law used to draw growth rates
+growth_rate=0.01 # growth rate of villages and outgroup, if 0 : population has a constant size
+sample_size=20
+nbsimu=200 # nb of simulations
+cores=40
+nameDir="matrilineal_villages" # name of the output directory
+
+############################
+####### SIMULATIONS ########
+############################
+
+if $random_fission; then
+	rf="T"
+else
+    rf="F"
+fi
+if $violence; then
+	vl='T'
+else
+    vl="F"
+fi
+
+echo "Starting simulations"
+
+cd $dir
+
+if [ "$descent" = "bilateral" ]; then
+	path=$descent/regular/r=$growth_rate
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'	'Generation'	'mean_nb_children_per_couple'	'var_nb_children_per_couple'	'mothers'	'fathers' 'singleInd'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+else
+	if [ $vl = "T" ]; then
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold/e=$e
+	else
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold
+	fi
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'    'Generation'    'N_ind'    'Nb_of_fissions'    'Nb_of_extinctions'    'Nb_of_groups'    'mothers'    'Nb_indiv_per_group'    'var_nb_ind_per_group'    'Nb_women_per_group'    'fathers'    'failed_couples'    'singleInd'	'Nb_children_per_couple'    'var_nb_children_per_couple'    'mean_group_depth'    'var_group_depth'    'mean_migrant_ratio'    'var_migrant_ratio' 'meanFissionTime' 'varFissionTime'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+	echo "'Replicat'	'Generation'	'Group'	'nChildren'" > $dir/Tables/metrics/$path/$nameDir/nChildrenPerCouple.txt
+	echo "'Replicat'    'Generation'    'GroupDepth'" > $dir/Tables/metrics/$path/$nameDir/groupDepth.txt
+	echo "'Replicat'    'Generation'    'FissionTime'" > $dir/Tables/metrics/$path/$nameDir/fissionTime.txt
+	echo "'Replicat'	'Generation'	'Step'	'nMales'	'nInds'	'sexRatio'" > $dir/Tables/metrics/$path/$nameDir/sexRatio.txt
+fi
+
+cd simulations/$path/$nameDir/
+
+## Replace parameters in the slim file ##
+
+if [ "$descent" = "bilateral" ]; then
+	cat $dir/SLiM_models/bilateral_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_chr_size/${chr_size}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+else
+    cat $dir/SLiM_models/unilineal_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_random_fission/${rf}/g;s/bash_fission_threshold/${fission_threshold}/g;s/bash_pM/${pM}/g;s/bash_violence/${vl}/g;s/bash_extinction_rate/${e}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_descent_rule/${descent_rule}/g;s/bash_sigma/${sigma}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_transmission/${transmission}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+fi
+
+## Create a new file for each simulation ##
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/simulations/$path/$nameDir/$i
+done
+
+cd $dir/simulations/$path/$nameDir/
+if $burnin; then
+	echo "burnin"
+	for i in $(seq 1 1 $nbsimu)
+	do	
+		cd $dir/simulations/$path/$nameDir/$i
+		cat $dir/SLiM_scripts/burnin.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_nGroupsPerVillage/${nb_groups}/g;s/bash_total_carrying_capacity/${K_total}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_descent/${descent}/g;s/bash_Num_replicat/${i}/g" > "burnin_${i}.slim"
+		echo "slim $i/burnin_${i}.slim"
+		cd ..
+	done > launcher.txt
+	parallel -a launcher.txt -j $cores
+fi
+
+echo "SLiM simulations"
+cd $dir/simulations/$path/$nameDir
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/$i
+	cat ../islandmodel.slim | sed "s/bash_Num_replicat/${i}/g" > "islandmodel_${i}.slim"
+
+    echo "slim $i/islandmodel_${i}.slim > $i/outputSlim${i}.slim"
 		
-		inds = pop.individuals;
-		females = inds[inds.sex=='F'];
-		males = inds[inds.sex=='M'];
-		sizeF = size(females); // nb of females
-		sizeM = size(males); // nb of males
-		
-		if (POLY == F) {
-			// maximum nb of couples
-			size = min(sizeF, sizeM);
-			
-			// single individuals
-			nSingleInd = nSingleInd + abs(sizeF - sizeM);
-			
-			// shuffle females and males in lists
-			indsF = pop.sampleIndividuals(size, sex = 'F');
-			indsM = pop.sampleIndividuals(size, sex='M');
-		}
-		else {
-			size = sizeF;
-			weights = rgeom(size(males), 1/2);
-			indsM = sample(males, size, replace = T, weights = weights);
-			indsF = females;
-		}
-		
-		// initialize nChildrenPerCouple for each couple
-		for (i in seq(0, size)) {
-			nChildrenPerCouple.setValue(asString(nCouples + i), 0);
-		}
-		
-		while (nChildrenDone < K_village) {
-			
-			// random draw
-			index = rdunif(1, 0, size-1);
-			
-			father = indsM[index]; // we take the father
-			mother = indsF[index]; // we take the mother
-			
-			// alternate sex
-			if (integerMod(nChildrenDone, 2) == 0) {
-				sex = "M";
-			}
-			else {
-				sex = "F";
-			}
-			
-			child = pop.addCrossed(mother, father, sex = sex);	// make child
-			wrongSex = F;
-			
-			// females should not have a Y and have a mito and males should have a Y and not a mito
-			if (child.genome2.containsMarkerMutation(m2, UpperXY)) {
-				if (child.genome1.containsMarkerMutation(m3, UpperMt)) {
-					failedChildren = c(failedChildren, child.pedigreeID);
-					wrongSex = T;
-				}
-				else if (child.sex == 'F') {
-					failedChildren = c(failedChildren, child.pedigreeID);
-					wrongSex = T;
-				}
-			}
-			else {
-				if (!child.genome1.containsMarkerMutation(m3, UpperMt)) {
-					failedChildren = c(failedChildren, child.pedigreeID);
-					wrongSex = T;
-				}
-				else if (child.sex == 'M') {
-					failedChildren = c(failedChildren, child.pedigreeID);
-					wrongSex = T;
-				}
-			}
-			
-			if (wrongSex == F) {
-				// increase the total nb of children
-				nChildrenDone = nChildrenDone + 1;
-				// update nChildrenPerCouple
-				nChildren = nChildrenPerCouple.getValue(asString(nCouples + index));
-				nChildren = nChildren + 1;
-				nChildrenPerCouple.setValue(asString(nCouples + index), nChildren);
-				// increment lists of mothers and fathers
-				fat = unique(c(fat, father));
-				mot = unique(c(mot, mother));
-			}
-		}
-		nCouples = nCouples + size;
-	}
-	
-	sim.setValue("nChildrenPerCouple", nChildrenPerCouple);
-	mothers = size(mot)/nIndsF * 100;
-	sim.setValue("mothers", mothers);
-	fathers = size(fat)/nIndsM * 100;
-	sim.setValue("fathers", fathers);
-	sim.setValue('failedChildren', failedChildren);
-	sim.setValue('singleInd', nSingleInd/nInds * 100);
-}
+	cd ..
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-early() {
-	//non-overlapping generations : we kill parents
-	inds = sim.subpopulations.individuals;
-	adults = sim.getValue("adults");
-	if (!isNULL(adults)) {
-		sim.killIndividuals(sim.individualsWithPedigreeIDs(adults));
-	}
-	
-	// kill failed children
-	failedChildren = sim.getValue("failedChildren");
-	if (!isNULL(failedChildren)) {
-		sim.killIndividuals(sim.individualsWithPedigreeIDs(failedChildren));
-	}
-}
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME)) seconds to complete this task"
 
-20001:20100	late() {
-	nChildrenPerCouple = sim.getValue("nChildrenPerCouple");
-	nChildren = c();
-	for (couple in nChildrenPerCouple.allKeys) {
-		nChildren = c(nChildren, nChildrenPerCouple.getValue(couple));
-	}
-	nChildrenMean = mean(nChildren);
-	nChildrenVar = var(nChildren);
-	mothers = sim.getValue("mothers");
-	fathers =  sim.getValue("fathers");
-	singleInd = sim.getValue("singleInd");
-	line = paste("bash_Num_replicat", community.tick, nChildrenMean, nChildrenVar, mothers, fathers, singleInd);
-	writeFile(paste0(output, "metrics.txt"), line, append = T);
-}
+##################################
+####### OUTPOUT VCF FILES ########
+##################################
 
-20020 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_20.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+cd $dir/simulations/$path/$nameDir/
+echo "output VCF files"
+STARTTIME2=$(date +%s)
 
-20040 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_40.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+generations=$(seq 0 20 100)
 
-20060 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_60.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/
 
-20080 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_80.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/subset_trees_villages_bilateral_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -o $dir/simulations/$path/$nameDir/$i/ > $i/outputPy${i}.txt"
+	else
+		echo "python $dir/Python_scripts/subset_trees_villages_unilineal_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -d $descent_rule -o $dir/simulations/$path/$nameDir/$i/ -t $dir/Tables/metrics/$path/$nameDir > $i/outputPy${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-20100 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_100.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-}
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME2)) seconds to complete this task"
 
-/*
-20200 late() {
-	filename = 'bash_Num_replicat/Sim_bash_Num_replicat_gen_200.trees';
-	print(filename);
-	sim.treeSeqOutput(path = filename);
-} */
+##################################
+######## COMPUTE METRICS #########
+##################################
+
+echo "compute diversity metrics"
+STARTTIME4=$(date +%s)
+cd $dir/
+
+rm -rf $dir/Tables/Pi/$path/$nameDir
+mkdir -p $dir/Tables/Pi/$path/$nameDir
+python Python_scripts/Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+python Python_scripts/Global_Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME4)) seconds to complete this task"
+
+##################################
+####### BAYESIAN INFERENCE #######
+##################################
+
+echo "write .nex files"
+STARTTIME3=$(date +%s)
+
+cd $dir/BEAST/$descent/regular/
+rm -rf $dir/BEAST/$path/$nameDir
+mkdir -p $dir/BEAST/$path/$nameDir
+
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/BEAST/$path/$nameDir/$i
+done
+
+echo "Generate .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/write_nexus_bilateral.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	else
+		echo "python $dir/Python_scripts/write_nexus.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+# transform nexus
+echo "Transform .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "bash transform_nexus.txt -d $dir -p $path -n $nameDir -R ${i} -g 100"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+echo "Generate .xml files"
+# create xml file
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beastgen template_Mito.xml $path/$nameDir/$i/Sim_Mito.nex $path/$nameDir/$i/Sim_Mito.xml"
+	echo "beastgen template_Y.xml $path/$nameDir/$i/Sim_Y.nex $path/$nameDir/$i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/$path/$nameDir/
+
+# beast inference
+echo "bayesian inference"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Mito.xml"
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+echo "Generate Skyline Plots"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "Rscript $dir/R_scripts/skyline_plots.R '$dir/BEAST/$path/$nameDir/$i/'"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+# Remove intermediate files
+cd $dir/BEAST/$path/$nameDir/
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $i
+	rm -v !(skyline*)
+	cd $dir/BEAST/$path/$nameDir/
+done
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME3)) seconds to complete this task"

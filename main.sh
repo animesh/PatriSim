@@ -16,9 +16,9 @@ fission_threshold=150
 pM=0  # probability for a group to move to another village after a split
 violence=false # true or false
 descent="unilineal" # "unilineal" or "bilateral"
-descent_rule="patrilineal" # "patrilineal" or "matrilineal"
+descent_rule="matrilineal" # "patrilineal" or "matrilineal"
 nb_villages=5
-nb_groups=3 # nb of descent groups -> does not make sense for bilateral descent but usefull to normalize villages' sizes
+nb_groups=3 # nb of descent groups -> does not make sense for bilateral descent but useful to normalize villages' sizes
 K=100 # carrying capacity per group
 polygyny="F" # "F" or "T"
 declare -i K_total=$nb_villages*$nb_groups*$K # total carrying capacity
@@ -34,7 +34,7 @@ growth_rate=0.01 # growth rate of villages and outgroup, if 0 : population has a
 sample_size=20
 nbsimu=200 # nb of simulations
 cores=40
-nameDir="patrilineal_villages" # name of the output directory
+nameDir="matrilineal_villages" # name of the output directory
 
 ############################
 ####### SIMULATIONS ########
@@ -68,7 +68,7 @@ else
 	fi
 	rm -rf $dir/Tables/metrics/$path/$nameDir
 	mkdir -p $dir/Tables/metrics/$path/$nameDir
-	echo "'Replicat'    'Generation'    'N_ind'    'Nb_of_fissions'    'Nb_of_extinctions'    'Nb_of_groups'    'fathers'    'Nb_indiv_per_group'    'var_nb_ind_per_group'    'Nb_women_per_group'    'mothers'    'failed_couples'    'singleInd'	'Nb_children_per_couple'    'var_nb_children_per_couple'    'mean_group_depth'    'var_group_depth'    'mean_migrant_ratio'    'var_migrant_ratio' 'meanFissionTime' 'varFissionTime'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+	echo "'Replicat'    'Generation'    'N_ind'    'Nb_of_fissions'    'Nb_of_extinctions'    'Nb_of_groups'    'mothers'    'Nb_indiv_per_group'    'var_nb_ind_per_group'    'Nb_women_per_group'    'fathers'    'failed_couples'    'singleInd'	'Nb_children_per_couple'    'var_nb_children_per_couple'    'mean_group_depth'    'var_group_depth'    'mean_migrant_ratio'    'var_migrant_ratio' 'meanFissionTime' 'varFissionTime'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
 	echo "'Replicat'	'Generation'	'Group'	'nChildren'" > $dir/Tables/metrics/$path/$nameDir/nChildrenPerCouple.txt
 	echo "'Replicat'    'Generation'    'GroupDepth'" > $dir/Tables/metrics/$path/$nameDir/groupDepth.txt
 	echo "'Replicat'    'Generation'    'FissionTime'" > $dir/Tables/metrics/$path/$nameDir/fissionTime.txt

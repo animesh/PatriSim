@@ -1,0 +1,13 @@
+/workspaces/PatriSim/build/CMakeFiles/install/local.dir
+/workspaces/PatriSim/build/CMakeFiles/install.dir
+/workspaces/PatriSim/build/CMakeFiles/list_install_components.dir
+/workspaces/PatriSim/build/CMakeFiles/rebuild_cache.dir
+/workspaces/PatriSim/build/CMakeFiles/edit_cache.dir
+/workspaces/PatriSim/build/CMakeFiles/test.dir
+/workspaces/PatriSim/build/CMakeFiles/install/strip.dir
+/workspaces/PatriSim/build/CMakeFiles/eidos.dir
+/workspaces/PatriSim/build/CMakeFiles/slim.dir
+/workspaces/PatriSim/build/CMakeFiles/tables.dir
+/workspaces/PatriSim/build/CMakeFiles/kastore.dir
+/workspaces/PatriSim/build/CMakeFiles/eidos_zlib.dir
+/workspaces/PatriSim/build/CMakeFiles/gsl.dir

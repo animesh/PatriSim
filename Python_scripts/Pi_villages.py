@@ -1,177 +1,240 @@
-import os
-import numpy as np
-from metrics import alleles_count, Pi, Theta
-import glob
-import argparse
+#!/bin/bash
 
-def parse_args() :
-	parser = argparse.ArgumentParser(description='Compute mean nucleotide diversity for each chromosome and each replicate')
-	parser.add_argument('-s', '--source', dest='path_source', required=True, help='Source folder')
-	parser.add_argument('-o', '--output', dest='output', help='Output folder path') 
-	args = parser.parse_args()
-	return args.path_source, args.output
+STARTTIME=$(date +%s)
 
-path_source, output = parse_args()
+#############################
+######## PARAMETERS #########
+#############################
 
-os.chdir(output)
-f_out1 = open("Pi_X_mean_by_rep.txt", 'w') # file containing means of Pi(X) per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out1)
+dir=~ # path
+burnin=true  # run the burnin (need to be run only once)
 
-f_out2 = open("Pi_Y_mean_by_rep.txt", 'w') # file containing means of Pi(Y) per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out2)
+chr_size="c(1e6, 1e6, 1e4)"
+random_fission=false # true or false
+transmission="full" # "full" or "half"
+fission_threshold=150
+pM=0  # probability for a group to move to another village after a split
+violence=false # true or false
+descent="unilineal" # "unilineal" or "bilateral"
+descent_rule="matrilineal" # "patrilineal" or "matrilineal"
 
-f_out3 = open("Pi_A_mean_by_rep.txt", 'w') # file containing means of Pi(A) per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out3)
+nb_villages=5
+nb_groups=3 # nb of descent groups -> does not make sense for bilateral descent but useful to normalize villages' sizes
+K=100 # carrying capacity per group
+polygyny="F" # "F" or "T"
+declare -i K_total=$nb_villages*$nb_groups*$K # total carrying capacity
 
-f_out4 = open("Pi_Mito_mean_by_rep.txt", 'w') # file containing means of Pi(Mito) per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out4)
+########## EXTINCTION RATE IN CASE OF VIOLENCE ###########
+e=0.15
+##########################################################
 
-f_out5 = open("QPi_mean_by_rep.txt", 'w') # file containing means of QPi per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out5)
+mf=0.1  # female migration rate
+mm=0  # male migration rate
+sigma=0.1 # variance of the normal law used to draw growth rates
+growth_rate=0.01 # growth rate of villages and outgroup, if 0 : population has a constant size
+sample_size=20
+nbsimu=200 # nb of simulations
+cores=40
+nameDir="matrilineal_villages" # name of the output directory
 
-f_out6 = open("Pi_mito_Y_mean_by_rep.txt", 'w') # file containing means of Pi(Y/Mito) per replicate
-header=['mf/m', 'Gen', 'Pi', 'Theta', 'Nb_SNPs']
-print('\t'.join(header), file=f_out6)
+############################
+####### SIMULATIONS ########
+############################
 
-generations = [0, 20, 40, 60, 80, 100]
+if $random_fission; then
+	rf="T"
+else
+    rf="F"
+fi
+if $violence; then
+	vl='T'
+else
+    vl="F"
+fi
 
-for rep in range (1, 201):
-	for gen in generations :
-		os.chdir(path_source)
-		os.chdir(str(rep))
+echo "Starting simulations"
 
-		# initialize indices
-		pi_rep_X, theta_rep_X, nb_snps_rep_X = [], [], []
-		pi_rep_Y, theta_rep_Y, nb_snps_rep_Y = [], [], []
-		pi_rep_A, theta_rep_A, nb_snps_rep_A = [], [], []
-		pi_rep_Mito, theta_rep_Mito, nb_snps_rep_Mito = [], [], []
-		Q_pi_rep, Q_theta_rep, Q_nb_snps_rep = [], [], []
-		pi_rep_mito_Y, theta_rep_mito_Y, nb_snps_rep_mito_Y = [], [], []
+cd $dir
 
-		chr_size_A = chr_size_X = chr_size_Y = 1e6
-		chr_size_mito = 1e4
+if [ "$descent" = "bilateral" ]; then
+	path=$descent/regular/r=$growth_rate
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'	'Generation'	'mean_nb_children_per_couple'	'var_nb_children_per_couple'	'mothers'	'fathers' 'singleInd'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+else
+	if [ $vl = "T" ]; then
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold/e=$e
+	else
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold
+	fi
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'    'Generation'    'N_ind'    'Nb_of_fissions'    'Nb_of_extinctions'    'Nb_of_groups'    'mothers'    'Nb_indiv_per_group'    'var_nb_ind_per_group'    'Nb_women_per_group'    'fathers'    'failed_couples'    'singleInd'	'Nb_children_per_couple'    'var_nb_children_per_couple'    'mean_group_depth'    'var_group_depth'    'mean_migrant_ratio'    'var_migrant_ratio' 'meanFissionTime' 'varFissionTime'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+	echo "'Replicat'	'Generation'	'Group'	'nChildren'" > $dir/Tables/metrics/$path/$nameDir/nChildrenPerCouple.txt
+	echo "'Replicat'    'Generation'    'GroupDepth'" > $dir/Tables/metrics/$path/$nameDir/groupDepth.txt
+	echo "'Replicat'    'Generation'    'FissionTime'" > $dir/Tables/metrics/$path/$nameDir/fissionTime.txt
+	echo "'Replicat'	'Generation'	'Step'	'nMales'	'nInds'	'sexRatio'" > $dir/Tables/metrics/$path/$nameDir/sexRatio.txt
+fi
 
-		filenames_A = sorted(glob.glob('Sim_A_*_{0}_gen_{1}_*.vcf'.format(rep, gen))) # list of files of replicate rep for autosomes
-		if len(filenames_A) == 0 :
-			continue
-		filenames_X = sorted(glob.glob('Sim_X_*_{0}_gen_{1}_*.vcf'.format(rep, gen))) # list of files of replicate rep for X chr
-		filenames_Y = sorted(glob.glob('Sim_Y_*_{0}_gen_{1}_*.vcf'.format(rep, gen))) # list of files of replicate rep for Y chr
-		filenames_Mito = sorted(glob.glob('Sim_Mito_*_{0}_gen_{1}_*.vcf'.format(rep, gen))) # list of files of replicate rep for mt chr
+cd simulations/$path/$nameDir/
 
-		mf = filenames_A[0].split('_')[2]
+## Replace parameters in the slim file ##
 
-		for j in range (0, len(filenames_A)):
-			file_1A = filenames_A[j]
-			AA1, AB1, nb_chr1A, nb_snps_A = alleles_count(file_1A) # Compute the number of alleles 0 and the number of alleles 1
-			Pi_A = Pi(chr_size_A, AA1, AB1) # Compute Pi
-			Theta_A = Theta(AA1, nb_chr1A, chr_size_A) # Compute Theta
-			pi_rep_A += [Pi_A]
-			theta_rep_A += [Theta_A]
-			nb_snps_rep_A.append(nb_snps_A)
+if [ "$descent" = "bilateral" ]; then
+	cat $dir/SLiM_models/bilateral_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_chr_size/${chr_size}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+else
+    cat $dir/SLiM_models/unilineal_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_random_fission/${rf}/g;s/bash_fission_threshold/${fission_threshold}/g;s/bash_pM/${pM}/g;s/bash_violence/${vl}/g;s/bash_extinction_rate/${e}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_descent_rule/${descent_rule}/g;s/bash_sigma/${sigma}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_transmission/${transmission}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+fi
 
-			file_1X = filenames_X[j]
-			XA1, XB1, nb_chr1X, nb_snps_X = alleles_count(file_1X) # Compute the number of alleles 0 and the number of alleles 1
-			Pi_X = Pi(chr_size_X, XA1, XB1) # Compute Pi
-			Theta_X = Theta(XA1, nb_chr1X, chr_size_X) # Compute Theta
-			pi_rep_X += [Pi_X]
-			theta_rep_X += [Theta_X]
-			nb_snps_rep_X.append(nb_snps_X)
-			
-			# Compute Q(pi)
-			if Pi_A == 0 :
-				Q_pi = float('nan')
-			else :
-				Q_pi = Pi_X/Pi_A
+## Create a new file for each simulation ##
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/simulations/$path/$nameDir/$i
+done
 
-			# Compute Q(theta)
-			if Theta_A == 0 :
-				Q_theta = float('nan')
-			else :
-				Q_theta = Theta_X/Theta_A
-			
-			# Ratio of nb of SNPs
-			if nb_snps_A == 0 :
-				Q_nb_snps = float('nan')
-			else :
-				Q_nb_snps = nb_snps_X/nb_snps_A
+cd $dir/simulations/$path/$nameDir/
+if $burnin; then
+	echo "burnin"
+	for i in $(seq 1 1 $nbsimu)
+	do	
+		cd $dir/simulations/$path/$nameDir/$i
+		cat $dir/SLiM_scripts/burnin.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_nGroupsPerVillage/${nb_groups}/g;s/bash_total_carrying_capacity/${K_total}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_descent/${descent}/g;s/bash_Num_replicat/${i}/g" > "burnin_${i}.slim"
+		echo "slim $i/burnin_${i}.slim"
+		cd ..
+	done > launcher.txt
+	parallel -a launcher.txt -j $cores
+fi
 
-			Q_pi_rep += [Q_pi]
-			Q_theta_rep += [Q_theta]
-			Q_nb_snps_rep.append(Q_nb_snps)
+echo "SLiM simulations"
+cd $dir/simulations/$path/$nameDir
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/$i
+	cat ../islandmodel.slim | sed "s/bash_Num_replicat/${i}/g" > "islandmodel_${i}.slim"
 
-		for j in range (0, len(filenames_Y)):
-			file_1Y = filenames_Y[j]
-			YA1, YB1, nb_chr1Y, nb_snps_Y = alleles_count(file_1Y) # Compute the number of alleles 0 and the number of alleles 1
-			Pi_Y = Pi(chr_size_Y, YA1, YB1) # Compute Pi
-			Theta_Y = Theta(YA1, nb_chr1Y, chr_size_Y) # Compute theta
-			pi_rep_Y += [Pi_Y]
-			theta_rep_Y += [Theta_Y]
-			nb_snps_rep_Y.append(nb_snps_Y)
+    echo "slim $i/islandmodel_${i}.slim > $i/outputSlim${i}.slim"
+		
+	cd ..
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-		for j in range (0, len(filenames_Mito)):
-			file_1M = filenames_Mito[j]
-			MA1, MB1, nb_chr1M, nb_snps_mito = alleles_count(file_1M) # Compute the number of alleles 0 and the number of alleles 1
-			Pi_M = Pi(chr_size_mito, MA1, MB1) # Compute Pi
-			Theta_M = Theta(MA1, nb_chr1M, chr_size_mito) # Compute theta
-			pi_rep_Mito += [Pi_M]
-			theta_rep_Mito += [Theta_M]
-			nb_snps_rep_Mito.append(nb_snps_mito)
-	        
-		pi_rep_mito_Y = np.nanmean(pi_rep_Mito)/np.nanmean(pi_rep_Y) # Compute Pi(Mito/Y)
-		theta_rep_mito_Y = np.nanmean(theta_rep_Mito)/np.nanmean(theta_rep_Y) # Compute Theta(Mito/Y)
-		nb_snps_rep_mito_Y = np.nanmean(nb_snps_rep_Mito)/np.nanmean(nb_snps_rep_Y) # Compute Tajima's D (Mito/Y)
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME)) seconds to complete this task"
 
-		# Compute means
-		mean_pi_A = np.nanmean(pi_rep_A)
-		mean_theta_A = np.nanmean(theta_rep_A)
-		mean_nb_snps_A = np.nanmean(nb_snps_rep_A)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_A), str(mean_theta_A), str(mean_nb_snps_A)]
-		print('\t'.join(line), file=f_out3)
+##################################
+####### OUTPOUT VCF FILES ########
+##################################
 
-		mean_pi_X = np.nanmean(pi_rep_X)
-		mean_theta_X = np.nanmean(theta_rep_X)
-		mean_nb_snps_X = np.nanmean(nb_snps_rep_X)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_X), str(mean_theta_X), str(mean_nb_snps_X)]
-		print('\t'.join(line), file=f_out1)
+cd $dir/simulations/$path/$nameDir/
+echo "output VCF files"
+STARTTIME2=$(date +%s)
 
-		mean_pi_Y = np.nanmean(pi_rep_Y)
-		mean_theta_Y = np.nanmean(theta_rep_Y)
-		mean_nb_snps_Y = np.nanmean(nb_snps_rep_Y)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_Y), str(mean_theta_Y), str(mean_nb_snps_Y)]
-		print('\t'.join(line), file=f_out2)
+generations=$(seq 0 20 100)
 
-		mean_pi_Mito = np.nanmean(pi_rep_Mito)
-		mean_theta_Mito = np.nanmean(theta_rep_Mito)
-		mean_nb_snps_Mito = np.nanmean(nb_snps_rep_Mito)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_Mito), str(mean_theta_Mito), str(mean_nb_snps_Mito)]
-		print('\t'.join(line), file=f_out4)
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/
 
-		mean_pi_Q = np.nanmean(Q_pi_rep)
-		mean_Q_theta = np.nanmean(Q_theta_rep)
-		mean_Q_nb_snps = np.nanmean(Q_nb_snps_rep)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_Q), str(mean_Q_theta), str(mean_Q_nb_snps)]
-		print('\t'.join(line), file=f_out5)
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/subset_trees_villages_bilateral_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -o $dir/simulations/$path/$nameDir/$i/ > $i/outputPy${i}.txt"
+	else
+		echo "python $dir/Python_scripts/subset_trees_villages_unilineal_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -d $descent_rule -o $dir/simulations/$path/$nameDir/$i/ -t $dir/Tables/metrics/$path/$nameDir > $i/outputPy${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-		mean_pi_mito_Y = np.nanmean(pi_rep_mito_Y)
-		mean_theta_mito_Y = np.nanmean(theta_rep_mito_Y)
-		mean_nb_snps_mito_Y = np.nanmean(nb_snps_rep_mito_Y)
-		os.chdir(output)
-		line = [str(mf), str(gen), str(mean_pi_mito_Y), str(mean_theta_mito_Y), str(mean_nb_snps_mito_Y)]
-		print('\t'.join(line), file=f_out6)
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME2)) seconds to complete this task"
 
-f_out1.close()
-f_out2.close()
-f_out3.close()
-f_out4.close()
-f_out5.close()
-f_out6.close()
+##################################
+######## COMPUTE METRICS #########
+##################################
+
+echo "compute diversity metrics"
+STARTTIME4=$(date +%s)
+cd $dir/
+
+rm -rf $dir/Tables/Pi/$path/$nameDir
+mkdir -p $dir/Tables/Pi/$path/$nameDir
+python Python_scripts/Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+python Python_scripts/Global_Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME4)) seconds to complete this task"
+
+##################################
+####### BAYESIAN INFERENCE #######
+##################################
+
+echo "write .nex files"
+STARTTIME3=$(date +%s)
+
+cd $dir/BEAST/$descent/regular/
+rm -rf $dir/BEAST/$path/$nameDir
+mkdir -p $dir/BEAST/$path/$nameDir
+
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/BEAST/$path/$nameDir/$i
+done
+
+echo "Generate .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/write_nexus_bilateral.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	else
+		echo "python $dir/Python_scripts/write_nexus.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+# transform nexus
+echo "Transform .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "bash transform_nexus.txt -d $dir -p $path -n $nameDir -R ${i} -g 100"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+echo "Generate .xml files"
+# create xml file
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beastgen template_Mito.xml $path/$nameDir/$i/Sim_Mito.nex $path/$nameDir/$i/Sim_Mito.xml"
+	echo "beastgen template_Y.xml $path/$nameDir/$i/Sim_Y.nex $path/$nameDir/$i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/$path/$nameDir/
+
+# beast inference
+echo "bayesian inference"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Mito.xml"
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+echo "Generate Skyline Plots"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "Rscript $dir/R_scripts/skyline_plots.R '$dir/BEAST/$path/$nameDir/$i/'"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+# Remove intermediate files
+cd $dir/BEAST/$path/$nameDir/
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $i
+	rm -v !(skyline*)
+	cd $dir/BEAST/$path/$nameDir/
+done
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME3)) seconds to complete this task"

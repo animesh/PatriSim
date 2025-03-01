@@ -1,147 +1,240 @@
-import msprime, tskit
-import os
-import numpy as np
-import random
-import glob
-import argparse
+#!/bin/bash
 
-def parse_args() :
-	parser = argparse.ArgumentParser(description='Split trees into A, X, Y and mito and generate vcf files')
-	parser.add_argument('-s', '--source', dest='path_source', required=True, help='Source directory')
-	parser.add_argument('-rep', '--replicat', dest='rep', type = int, required=True, help='Replicate number')
-	parser.add_argument('--sample-size', dest='sample_size', type = int, required=True, help='Number (even) of individuals sampled per village')
-	parser.add_argument('-K', '--carrying-capacity', dest='K', type = int, required=True, help='Total carrying capacity of the simulation')
-	parser.add_argument('-gen', '--generation', dest='gen', type = int, required=True, help='Generation')
-	parser.add_argument('-o', '--output', dest = 'output', required = True, help = 'Output file path')
-	args = parser.parse_args()
-	return args.path_source, args.rep, args.sample_size, args.K, args.gen, args.output
+STARTTIME=$(date +%s)
 
-path_source, rep, sample_size, K, gen, output = parse_args()
+#############################
+######## PARAMETERS #########
+#############################
 
-###### Exceptions ######
-if sample_size % 2 != 0 :
-	raise Exception("Sample size isn't an even number")
+dir=~ # path
+burnin=true  # run the burnin (need to be run only once)
 
-chr_size = [1e6, 1e6, 1e4]
+chr_size="c(1e6, 1e6, 1e4)"
+random_fission=false # true or false
+transmission="full" # "full" or "half"
+fission_threshold=150
+pM=0  # probability for a group to move to another village after a split
+violence=false # true or false
+descent="unilineal" # "unilineal" or "bilateral"
+descent_rule="matrilineal" # "patrilineal" or "matrilineal"
 
-# change seed for each simulation
-seed = str(random.sample(range(1,1000000000), 1)[0]) 
+nb_villages=5
+nb_groups=3 # nb of descent groups -> does not make sense for bilateral descent but useful to normalize villages' sizes
+K=100 # carrying capacity per group
+polygyny="F" # "F" or "T"
+declare -i K_total=$nb_villages*$nb_groups*$K # total carrying capacity
 
-os.chdir(path_source)
-os.chdir(str(rep))
+########## EXTINCTION RATE IN CASE OF VIOLENCE ###########
+e=0.15
+##########################################################
 
-###### Load file ######
-filename = glob.glob('Sim_*{0}_gen_{1}.trees'.format(rep, gen))[0]
-ts = tskit.load(filename)
+mf=0.1  # female migration rate
+mm=0  # male migration rate
+sigma=0.1 # variance of the normal law used to draw growth rates
+growth_rate=0.01 # growth rate of villages and outgroup, if 0 : population has a constant size
+sample_size=20
+nbsimu=200 # nb of simulations
+cores=40
+nameDir="matrilineal_villages" # name of the output directory
 
-###### Split trees into 3 for autosomes, X/Y and mtDNA ######
-ts_A = ts.keep_intervals(np.array([0, chr_size[0] + 1], ndmin=2))
-ts_A = ts_A.trim()  # remove empty intervals
+############################
+####### SIMULATIONS ########
+############################
 
-ts_X_Y = ts.keep_intervals(np.array([chr_size[0] + 1, chr_size[1] + chr_size[0] + 3], ndmin=2))
-ts_X_Y = ts_X_Y.trim()  # remove empty intervals
+if $random_fission; then
+	rf="T"
+else
+    rf="F"
+fi
+if $violence; then
+	vl='T'
+else
+    vl="F"
+fi
 
-ts_mito = ts.keep_intervals(np.array([chr_size[1] + chr_size[0] + 3, chr_size[2] + chr_size[1] + chr_size[0] + 5], ndmin=2))
-ts_mito = ts_mito.trim()  # remove empty intervals
+echo "Starting simulations"
 
-print("There are ", ts_X_Y.num_trees, " X/Y trees")
+cd $dir
 
-###### Make lists of nodes for each chromosome type ######
-id_X_Y = [node.id for node in ts_X_Y.nodes() if node.time == 0]
-id_Y = []
-id_Mito = []
+if [ "$descent" = "bilateral" ]; then
+	path=$descent/regular/r=$growth_rate
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'	'Generation'	'mean_nb_children_per_couple'	'var_nb_children_per_couple'	'mothers'	'fathers' 'singleInd'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+else
+	if [ $vl = "T" ]; then
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold/e=$e
+	else
+		path=$descent/regular/r=$growth_rate/sigma=$sigma/FT=$fission_threshold
+	fi
+	rm -rf $dir/Tables/metrics/$path/$nameDir
+	mkdir -p $dir/Tables/metrics/$path/$nameDir
+	echo "'Replicat'    'Generation'    'N_ind'    'Nb_of_fissions'    'Nb_of_extinctions'    'Nb_of_groups'    'mothers'    'Nb_indiv_per_group'    'var_nb_ind_per_group'    'Nb_women_per_group'    'fathers'    'failed_couples'    'singleInd'	'Nb_children_per_couple'    'var_nb_children_per_couple'    'mean_group_depth'    'var_group_depth'    'mean_migrant_ratio'    'var_migrant_ratio' 'meanFissionTime' 'varFissionTime'" > $dir/Tables/metrics/$path/$nameDir/metrics.txt
+	echo "'Replicat'	'Generation'	'Group'	'nChildren'" > $dir/Tables/metrics/$path/$nameDir/nChildrenPerCouple.txt
+	echo "'Replicat'    'Generation'    'GroupDepth'" > $dir/Tables/metrics/$path/$nameDir/groupDepth.txt
+	echo "'Replicat'    'Generation'    'FissionTime'" > $dir/Tables/metrics/$path/$nameDir/fissionTime.txt
+	echo "'Replicat'	'Generation'	'Step'	'nMales'	'nInds'	'sexRatio'" > $dir/Tables/metrics/$path/$nameDir/sexRatio.txt
+fi
 
-for tree in ts_X_Y.trees():
-	for mut in tree.mutations():
-		id_Y += [i for i in tree.leaves(mut.node)] # list of nodes' ids for the Y chr
-id_Y = list(set(id_Y))
-id_X = [j for j in id_X_Y if j not in id_Y] # list of nodes' ids for the X chr
+cd simulations/$path/$nameDir/
 
-for tree in ts_mito.trees():
-	for mut in tree.mutations():
-		id_Mito += [i for i in tree.leaves(mut.node)] # list of nodes' ids carrying a mutation representing mt chr
-id_Mito = list(set(id_Mito))
-	
-ts_Y_map = ts_X_Y.simplify(id_Y, map_nodes=True, keep_input_roots=True) # Y chr tree + correspondances with the ids of ts
-ts_Y = ts_Y_map[0]
+## Replace parameters in the slim file ##
 
-ts_X_map = ts_X_Y.simplify(id_X, map_nodes=True, keep_input_roots=True) # X chr tree + correspondances with the ids of ts
-ts_X = ts_X_map[0]
+if [ "$descent" = "bilateral" ]; then
+	cat $dir/SLiM_models/bilateral_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_chr_size/${chr_size}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+else
+    cat $dir/SLiM_models/unilineal_descent.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_random_fission/${rf}/g;s/bash_fission_threshold/${fission_threshold}/g;s/bash_pM/${pM}/g;s/bash_violence/${vl}/g;s/bash_extinction_rate/${e}/g;s/bash_mf_ratio/${mf}/g;s/bash_mm_ratio/${mm}/g;s/bash_descent_rule/${descent_rule}/g;s/bash_sigma/${sigma}/g;s/bash_growth_rate/${growth_rate}/g;s/bash_transmission/${transmission}/g;s/bash_namedir/${nameDir}/g;s/bash_polygyny/${polygyny}/g" > "islandmodel.slim"
+fi
 
-ts_mito_map = ts_mito.simplify(id_Mito, map_nodes=True, keep_input_roots=True) # mt chr tree + correspondances with the ids of ts
-ts_mito = ts_mito_map[0]
+## Create a new file for each simulation ##
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/simulations/$path/$nameDir/$i
+done
 
-###### Sample individuals ######
-indM, indF = [], []
-M, F = [], []
-nodes_M = []
-nodes_F = []
-villages = {} # associate village marker with individuals
+cd $dir/simulations/$path/$nameDir/
+if $burnin; then
+	echo "burnin"
+	for i in $(seq 1 1 $nbsimu)
+	do	
+		cd $dir/simulations/$path/$nameDir/$i
+		cat $dir/SLiM_scripts/burnin.slim | sed "s/bash_wd/${dir}/g;s/bash_Num_villages/${nb_villages}/g;s/bash_nGroupsPerVillage/${nb_groups}/g;s/bash_total_carrying_capacity/${K_total}/g;s/bash_carrying_capacity/${K}/g;s/bash_chr_size/${chr_size}/g;s/bash_descent/${descent}/g;s/bash_Num_replicat/${i}/g" > "burnin_${i}.slim"
+		echo "slim $i/burnin_${i}.slim"
+		cd ..
+	done > launcher.txt
+	parallel -a launcher.txt -j $cores
+fi
 
-for mut in ts.mutations() :
-	if mut.site != 0 :
-		continue
-	if mut.time != 0 :
-		continue
-	mut_list = mut.metadata['mutation_list'] 
-	marker = mut_list[0]['mutation_type']
-	if marker not in villages :
-		villages[marker] = []
-	node = mut.node
-	ind = ts.node(node).individual
-	if ind not in villages[marker] :
-		villages[marker].append(ind)
+echo "SLiM simulations"
+cd $dir/simulations/$path/$nameDir
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/$i
+	cat ../islandmodel.slim | sed "s/bash_Num_replicat/${i}/g" > "islandmodel_${i}.slim"
 
-# sample N men and N women per village
-N = int(sample_size/2)
-for ind in ts.individuals() :
-	if ind.metadata['sex'] == 1 :
-		indM.append(ind.id)
-	else :
-		indF.append(ind.id)
+    echo "slim $i/islandmodel_${i}.slim > $i/outputSlim${i}.slim"
+		
+	cd ..
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-for village in villages :
-	vilM = [ind for ind in indM if ind in villages[village]]
-	if len(vilM) < N :
-		continue # not enough men
-	M += random.sample(vilM, N)
-	vilF = [ind for ind in indF if ind in villages[village]]
-	if len(vilF) < N :
-		continue # not enough women
-	F += random.sample(vilF, N)
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME)) seconds to complete this task"
 
-nodes, nodes_X, nodes_Y, nodes_mito = {}, {}, {}, {}
-nodes_M, nodes_F = [], []
-for ind in ts.individuals() :
-	nodes_M.extend([node for node in ind.nodes if ind.id in M])
-	nodes_F.extend([node for node in ind.nodes if ind.id in F])
-nodes = nodes_M + nodes_F
+##################################
+####### OUTPOUT VCF FILES ########
+##################################
 
-nodes_ts_Y = [i for i in nodes_M if i in id_Y] # nodes' IDs in ts
-nodes_Y = [ts_Y_map[1][i] for i in nodes_ts_Y] # nodes' IDs in recap_ts_Y
+cd $dir/simulations/$path/$nameDir/
+echo "output VCF files"
+STARTTIME2=$(date +%s)
 
-nodes_ts_X = [i for i in nodes if i in id_X] # nodes' IDs in ts
-nodes_X = [ts_X_map[1][i] for i in nodes_ts_X] # nodes' IDs in recap_ts_X
+generations=$(seq 0 20 100)
 
-nodes_ts_mito = [i for i in nodes_F if i in id_Mito] # nodes' IDs in ts
-nodes_mito = [ts_mito_map[1][i] for i in nodes_ts_mito] # nodes' IDs in recap_ts_mito
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $dir/simulations/$path/$nameDir/
 
-###### Add mutations ######
-mutated_ts_Y = msprime.sim_mutations(ts_Y, rate = 2.5e-8, random_seed = seed, model = "jc69", keep = False)
-mutated_ts_mito = msprime.sim_mutations(ts_mito, rate = 5.5e-7, random_seed = seed, model = "jc69", keep = False)
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/subset_trees_villages_bilateral_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -o $dir/simulations/$path/$nameDir/$i/ > $i/outputPy${i}.txt"
+	else
+		echo "python $dir/Python_scripts/subset_trees_villages_unilineal_descent.py -s $dir/simulations/$path/$nameDir/ -rep $i -g generations --sample-size $sample_size -K $K_total -d $descent_rule -o $dir/simulations/$path/$nameDir/$i/ -t $dir/Tables/metrics/$path/$nameDir > $i/outputPy${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
 
-###### Simplify ######
-mutated_ts_Y = mutated_ts_Y.simplify(nodes_Y)
-mutated_ts_mito = mutated_ts_mito.simplify(nodes_mito)
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME2)) seconds to complete this task"
 
-#reference_sequence_A = tskit.random_nucleotides(mutated_ts_A.sequence_length)
-reference_sequence_Y = tskit.random_nucleotides(mutated_ts_Y.sequence_length)
-reference_sequence_mito = tskit.random_nucleotides(mutated_ts_mito.sequence_length)
+##################################
+######## COMPUTE METRICS #########
+##################################
 
-###### Output .nex files ######
-os.chdir(output)
-with open("Sim_Y_{0}_gen_{1}.nex".format(rep, gen), "w") as nexus_file:
-	mutated_ts_Y.write_nexus(nexus_file, include_trees = False, reference_sequence = reference_sequence_Y)
+echo "compute diversity metrics"
+STARTTIME4=$(date +%s)
+cd $dir/
 
-with open("Sim_Mito_{0}_gen_{1}.nex".format(rep, gen), "w") as nexus_file:
-	mutated_ts_mito.write_nexus(nexus_file, include_trees = False, reference_sequence = reference_sequence_mito)
+rm -rf $dir/Tables/Pi/$path/$nameDir
+mkdir -p $dir/Tables/Pi/$path/$nameDir
+python Python_scripts/Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+python Python_scripts/Global_Pi_villages.py -s $dir/simulations/$path/$nameDir/ -o $dir/Tables/Pi/$path/$nameDir/
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME4)) seconds to complete this task"
+
+##################################
+####### BAYESIAN INFERENCE #######
+##################################
+
+echo "write .nex files"
+STARTTIME3=$(date +%s)
+
+cd $dir/BEAST/$descent/regular/
+rm -rf $dir/BEAST/$path/$nameDir
+mkdir -p $dir/BEAST/$path/$nameDir
+
+for i in $(seq 1 1 $nbsimu)
+do	
+	mkdir $dir/BEAST/$path/$nameDir/$i
+done
+
+echo "Generate .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	if [ "$descent" = "bilateral" ]; then
+        echo "python $dir/Python_scripts/write_nexus_bilateral.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	else
+		echo "python $dir/Python_scripts/write_nexus.py -s $dir/simulations/$path/$nameDir/ -rep $i --sample-size 20 -K $K_total -gen 100 -o $dir/BEAST/$path/$nameDir/$i/ > $dir/simulations/$path/$nameDir/$i/outputPyNex${i}.txt"
+	fi
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+# transform nexus
+echo "Transform .nex files"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "bash transform_nexus.txt -d $dir -p $path -n $nameDir -R ${i} -g 100"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/
+echo "Generate .xml files"
+# create xml file
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beastgen template_Mito.xml $path/$nameDir/$i/Sim_Mito.nex $path/$nameDir/$i/Sim_Mito.xml"
+	echo "beastgen template_Y.xml $path/$nameDir/$i/Sim_Y.nex $path/$nameDir/$i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+cd $dir/BEAST/$path/$nameDir/
+
+# beast inference
+echo "bayesian inference"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Mito.xml"
+	echo "beast -working -beagle_scaling always -overwrite $i/Sim_Y.xml"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+echo "Generate Skyline Plots"
+for i in $(seq 1 1 $nbsimu)
+do
+	echo "Rscript $dir/R_scripts/skyline_plots.R '$dir/BEAST/$path/$nameDir/$i/'"
+done > launcher.txt
+parallel -a launcher.txt -j $cores
+
+# Remove intermediate files
+cd $dir/BEAST/$path/$nameDir/
+for i in $(seq 1 1 $nbsimu)
+do
+	cd $i
+	rm -v !(skyline*)
+	cd $dir/BEAST/$path/$nameDir/
+done
+
+ENDTIME=$(date +%s)
+echo "It takes $(($ENDTIME - $STARTTIME3)) seconds to complete this task"
